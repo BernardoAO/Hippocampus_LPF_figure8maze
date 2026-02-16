@@ -1,0 +1,8 @@
+1433	1	o
+1434	2	o
+1523	1	o 
+1527	1	o *breakes when using a window > 1.5
+1528	2	o *problematic days 3,6,7,8
+1529	2	o *low n (17)
+1631	1	o <3
+1632	2	o *low n (30)

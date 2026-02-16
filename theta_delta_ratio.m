@@ -1,7 +1,8 @@
 %% Td analysis functions
 % Bernardo AO
 
-function [vel_grid, ratio_grid] = theta_delta_ratio(pideals, lfps, opt)
+function [vel_grid, ratio_grid, tran, ratio_vel] = ...
+    theta_delta_ratio(pideals, lfps, opt)
     % Inputs:
     % pideals: cell of 1d arrays with the pideals object for each session
     % lfps: cell of 1d arrays with the LFP object for each session
@@ -11,6 +12,10 @@ function [vel_grid, ratio_grid] = theta_delta_ratio(pideals, lfps, opt)
     % vel_grid: 2d array with the mean velocity for each grid point
     % ratio_grid: 2d array with the mean theta delta ratio
     %   for each grid point
+    % tran: down and up states' transition indices.
+    
+    n_tw_tran = 10;
+    thr_tran = 3;
     
     n_sess = numel(lfps);
     vel_vec = [];
@@ -22,17 +27,27 @@ function [vel_grid, ratio_grid] = theta_delta_ratio(pideals, lfps, opt)
         lfp = lfps{n};
         pideal = pideals{n};
 
-        log_ratio_pt = TD_speed(pideal, lfp, opt.n_cycles, opt.win);
+        log_ratio_pt = get_ratio_pi(pideal, lfp, opt.n_cycles, opt.win);
         vel_vec = [vel_vec; pideal.v];
         ratio_vec = [ratio_vec; log_ratio_pt];
 
         x_vec = [x_vec; pideal.x];
         y_vec = [y_vec; pideal.y];
     end
+    
+    tran_u = get_state_transitions(ratio_vec, n_tw_tran, thr_tran);
+    tran_d = get_state_transitions(ratio_vec, n_tw_tran, -thr_tran);
+    tran = struct('up', tran_u, 'down', tran_d);
+    
+    ratio_vel = corr_speed_td(vel_vec,ratio_vec,opt);
 
-    vel_grid = plot_heatmap(x_vec, y_vec, vel_vec, "velocity", opt);
-    ratio_grid = plot_heatmap(x_vec, y_vec, ratio_vec, "ratio", opt);
-    %plot_speed_td(vel_vec,ratio_vec, opt)
+    % Get grids and plot
+    cmap = get_cmap();
+    vel_grid = fig8_heatmap(x_vec, y_vec, vel_vec, [], "velocity", ...
+        hot, opt);
+    ratio_grid = fig8_heatmap(x_vec, y_vec, ratio_vec, tran, "log ratio", ...
+        cmap, opt);
+    tran = hist_times(x_vec, y_vec, tran, cmap, opt);
 end
 
 function conv_result = conv_LFP(lfp, fs, freq_band, n_cycles)
@@ -62,7 +77,7 @@ function conv_result = conv_LFP(lfp, fs, freq_band, n_cycles)
     conv_result = circshift(fftfilt(morlet_wavelet, lfp), -delay);
 end
 
-function log_ratio_pt = TD_speed(pideal, lfp, n_cycles, win)
+function log_ratio_pt = get_ratio_pi(pideal, lfp, n_cycles, win)
     % Inputs:
     % pideal: pideal object 
     % lfp: LFP object
@@ -108,92 +123,192 @@ function log_ratio_pt = TD_speed(pideal, lfp, n_cycles, win)
     end
 end
 
-function plot_speed_td(v,r,opt)
-    % Plots a scatter and gets the correlation of a velocity vector and a
-    % ratio vector (v,r)
-    downsample = opt.downsample;
-    name = opt.fig_name;
-    color = opt.color;
+function ratio_down = get_state_transitions(ratio_vec, tw, thr)
+    ratio_down = [];
+    small_r = ratio_vec < thr;
 
-    % Calculate correlation
-    corr_coef = corr(v, r);
-    
-    p = polyfit(v, r, 1);  
-    r_fit = polyval(p, v);    
-
-    % Plot
-    figure;
-    d_idx = randi(length(v),1,downsample);
-    h = scatter(v(d_idx),r(d_idx),"filled");
-    h.MarkerFaceAlpha = 0.2;
-
-    hold on;
-    plot(v, r_fit, 'r-', 'LineWidth', 2, 'Color',color);  
-    
-    text(10,  8, "corr = " + num2str(corr_coef,2))
-    xlabel("velocity")
-    ylabel("log theta/delta")
-    ylim([-10, 10])
-    xlim([0,15])
-
-    t_name = name + " TD ratio velocity Correlation ";
-    title(t_name)
-    saveas(gcf, fullfile(opt.save_path, t_name + opt.ext));
-
+    for t = 2:length(ratio_vec) - tw
+        if small_r(t-1) == 0 && sum(small_r(t:t+tw)) > tw
+            ratio_down = [ratio_down, t];
+        end
+    end
 end
 
-function z_grid = plot_heatmap(x_vec, y_vec, z_vec, name, opt)
-    % Plots a heatmap given x,y, and z values
+function cmap = get_cmap()
+    % Color map for ratio
+    cn = 256;
+    top = linspace(1,0,cn/2)';
+    bot = linspace(0,1,cn/2)';
+    cmap = [ones(cn/2,1), bot, bot; top, top, ones(cn/2,1)];
+end
 
-    x_edges = -23:23;
-    y_edges = -35:35;
-    x_bins = length(x_edges);
-    y_bins = length(y_edges);
+function z_grid = fig8_heatmap(x_vec, y_vec, z_vec, tran, name, cmap,opt)
+    % Gets and plots a heatmap given x,y, and z values. 
+    % Plots a scatter as well if given a points index array
 
-    % Digitize x and y vectors into bin indices
+    x_edges = -22.5:1:22.5; 
+    y_edges = -35:35; 
+    x_bins = length(x_edges)-1;
+    y_bins = length(y_edges)-1;
+
     [~, ~, x_idx] = histcounts(x_vec, x_edges);
     [~, ~, y_idx] = histcounts(y_vec, y_edges);
 
-    % Remove data outside the bins
     valid = x_idx > 0 & y_idx > 0;
     x_idx = x_idx(valid);
     y_idx = y_idx(valid);
     z_vec = z_vec(valid);
 
-    % Convert 2D indices to linear indices for accumarray
     linear_idx = sub2ind([y_bins, x_bins], y_idx, x_idx);
+    z_sum = accumarray(linear_idx, z_vec, [y_bins*x_bins, 1], @sum, NaN);
+    z_count = accumarray(linear_idx, 1, [y_bins*x_bins, 1], @sum, NaN);
+    z_avg = z_sum ./ z_count;
 
-    % Compute sum and count of z_vec in each bin
-    vel_sum = accumarray(linear_idx, z_vec, [y_bins*x_bins, 1], @sum, NaN);
-    vel_count = accumarray(linear_idx, 1, [y_bins*x_bins, 1], @sum, NaN);
+    z_grid = reshape(z_avg, [y_bins, x_bins]);
 
-    % Compute average 
-    vel_avg = vel_sum ./ vel_count;
-
-    % Reshape into 2D grid
-    z_grid = reshape(vel_avg, [y_bins, x_bins]);
-
-    % Create x and y centers for plotting
     x_centers = (x_edges(1:end-1) + x_edges(2:end)) / 2;
     y_centers = (y_edges(1:end-1) + y_edges(2:end)) / 2;
 
-    % Plot
-    figure;
-    imagesc(x_centers, y_centers, z_grid);
-    axis xy; % flip y-axis so low values are at the bottom
-    t_name = opt.fig_name + " Average " + name + " heatmap";
-    title(t_name);
-    axis off
-    colormap(flipud(hot))
-    a = colorbar;
-    a.Label.String = name;
+    %% Plot
+    if ~isempty(tran) % up and down scatter
+        s_names = fieldnames(tran);
+        z_grid(isnan(z_grid)) = 0;
+        for s = 1:length(s_names)
 
-    if name == "theta power" || name == "delta power"
-        m = mean(z_grid,"all","omitmissing");
-        s = std(z_grid, [],"all","omitmissing");
-        clim([0,m+3*s]);
+            states = s_names{s};
+            points = tran.(states);
+
+            figure;
+            imagesc(x_centers, y_centers, z_grid);
+            axis xy;
+            axis off
+            lp = length(points);
+            x_tran = x_vec(points) + 0.1*randn(lp,1);
+            y_tran = y_vec(points) + 0.1*randn(lp,1);
+        
+            hold on
+            h = scatter(x_tran,y_tran,"filled");
+            h.MarkerFaceAlpha = 0.2;
+            h.MarkerFaceColor = 'black';
+            if strcmp(states, 'up')
+                h.Marker = "^";
+            elseif strcmp(states, 'down')
+                h.Marker = "v";
+            end
+            hold off
+            t_name = opt.fig_name + " Average " + name + " heatmap " + ...
+                states + " states";
+            title(t_name);
+            colormap(flipud(cmap))
+            clim([-4,4]);
+            a = colorbar;
+            a.Label.String = name;
+            saveas(gcf, fullfile(opt.save_path, t_name + opt.ext));
+        end
+
+    else % no scatter
+        figure;
+        imagesc(x_centers, y_centers, z_grid);
+        axis xy;
+        axis off
+        t_name = opt.fig_name + " Average " + name + " heatmap";
+        title(t_name);
+        colormap(flipud(cmap))
+        a = colorbar;
+        a.Label.String = name;
+
+        if name == "theta power" || name == "delta power"
+            m = mean(z_grid,"all","omitmissing");
+            s = std(z_grid, [],"all","omitmissing");
+            clim([0,m+3*s]);
+        end
+        saveas(gcf, fullfile(opt.save_path, t_name + opt.ext));
     end
-    saveas(gcf, fullfile(opt.save_path, t_name + opt.ext));
+end
+
+function tran = hist_times(x_vec, y_vec, tran, cmap,opt)
+    x_edges = -22.5:1:22.5; 
+    y_edges = -35:35;
+    
+    s_names = fieldnames(tran);
+    for s = 1:length(s_names)
+        states = s_names{s};
+        points = tran.(states);
+        pointsx = x_vec(points);
+        pointsy = y_vec(points);
+        [t_counts,~,~] = histcounts2(pointsx, pointsy,x_edges, y_edges);
+        
+        np = 1000;
+    
+        total_counts = zeros(length(x_edges)-1,length(y_edges)-1,np);
+        for p = 1:np
+            r = randperm(length(x_vec),length(points));
+            pointsx_r = x_vec(r);
+            pointsy_r = y_vec(r);
+            [counts,~,~] = histcounts2(pointsx_r, pointsy_r,x_edges, y_edges);
+            total_counts(:,:,p) = counts;
+        end
+    
+        m = mean(total_counts,3);
+        st = std(total_counts,[],3);
+        t_norm_counts = (t_counts - m);
+        c = (t_norm_counts ~= 0); 
+        t_norm_counts(c) = t_norm_counts(c) ./ (st(c) + 1e-3);
+        t_norm_counts = t_norm_counts.';
+        tran.(states) = {tran.(states), t_norm_counts};
+
+        x_centers = (x_edges(1:end-1) + x_edges(2:end)) / 2;
+        y_centers = (y_edges(1:end-1) + y_edges(2:end)) / 2;
+    
+        % Plot
+        figure;
+        imagesc(x_centers, y_centers, t_norm_counts);
+        axis xy;
+        axis off
+        colormap(flipud(cmap));
+        clim([-3,3]);
+        a = colorbar;
+        a.Label.String = 'Count z-score';
+        t_name = opt.fig_name + " Normalized histogram " + ...
+                    states + " states";
+        title(t_name);
+        saveas(gcf, fullfile(opt.save_path, t_name + opt.ext));
+    end
+
+    %figure;
+    %histogram2(pointsx, pointsy,x_edges, y_edges)
+    %colormap(flipud(hot))
+    %grid off
+    %xticks([])
+    %ticks([])
+end
+
+function r_v = corr_speed_td(v,r,opt)
+    % Plots a scatter and gets the correlation of a velocity vector and a
+    % ratio vector (v,r)    
+    v_edges = opt.v_edges;
+    v_bins = (v_edges(1:end-1) + v_edges(2:end)) / 2;
+    r_v = zeros(length(v_bins),1);
+    
+    [~, ~, bin_indx] = histcounts(v, v_edges);
+    for i = 1:length(v_bins)
+        r_v(i) = mean(r(bin_indx == i),'omitnan');
+    end
+
+end
+
+function plot_example_transitions(pideal, log_ratio_pt, ratio_down, thr)
+    figure;
+    tv = pideal.t - pideal.t(1);
+    plot(tv,log_ratio_pt,Color="#ae2012")
+    for t = ratio_down
+        xline(tv(t),LineStyle="--",Color="#0a9396")
+    end
+    yline(thr,LineStyle=":",Color="#343a40")
+    xlim([0,50])
+    xlabel("time [s]")
+    ylabel("log theta/delta")
+    box off
 end
 
 % Old code

@@ -19,15 +19,15 @@ genotypes = ["Control", "CA1-APP"];
 colors = [0.14,0.85,0.71; 0.85,0.14,0.28];
 
 % Parameters 
-region = "return"; % align to the region end
-time_window = [-5.0, 10]; % for ITPC around the onset
+region = "stem"; % align to the region end
+time_window = [-1.5, 1.5]; % for ITPC around the onset
 
 delay_t = {'d10'}; % sessInfo(i).sessDirs
 
 freq_band = [6, 12]; % [6, 12] Theta, [12, 20] Beta
 fig_name = delay_t{1} + " Theta";
 
-show_fig = true;
+show_fig = false;
 
 % Outputs
 problematicSessions = {};
@@ -108,7 +108,7 @@ for animal = animal_numbers
                 'color', colors(sessInfo.genotype,:), ...
                 'show_fig', show_fig);
 
-    try
+    %try
         [band_itpc, band_itpc_t, n_t] = ITPC_analysis(lfpds, region_ends, ...
             time_window, opt_itpc);
 
@@ -117,9 +117,9 @@ for animal = animal_numbers
             results(a).band_itpc = band_itpc;
             results(a).band_itpc_t = band_itpc_t;
         end
-    catch
-        problematicSessions = [problematicSessions; animal];
-    end
+    %catch
+    %    problematicSessions = [problematicSessions; animal];
+    %end
 
     %% Save
     results(a).animal = animal;
@@ -157,7 +157,7 @@ function plot_itpc(results, genotypes, time_window, colors, name)
         y_t{g} = [results(gv == g).band_itpc_t];
         itpc_genotype(g) = mean(y{g},"omitmissing");
         mean_t(g,:) = mean(y_t{g},2,"omitmissing");
-        std_t(g,:) = std(y_t{g},0,2,"omitmissing");
+        std_t(g,:) = std(y_t{g},0,2,"omitmissing") / sqrt(size(y_t{g},2));
     end
     
     %% bar plot
@@ -192,6 +192,7 @@ function plot_itpc(results, genotypes, time_window, colors, name)
     end
     legend(h, genotypes)
     ylabel("ITPC")
+    ylim([-2,3])
     xlabel("time [t]")
     t_name = "Theta " + " ITPC around " + name;
     title(t_name)
