@@ -4,7 +4,7 @@
 % Script dependencies: ITPC_analysis.m,  plotTrialPerCell, trialInfo2simple, readCRTsd
 % 
 addpath(genpath('W:\LABanalysis\SilviaProjectCode\AnalysisPerTrial\RunAnalysis'))
-addpath("W:\Lorena\Analysis_scripts\Bernardo_code\")
+addpath("W:\Bernardo\Hippocampus_LPF_figure8maze")
 
 disp('Starting ITPC Analysis')
 clc
@@ -17,7 +17,7 @@ animal_numbers = unique([All_sessInfo.animal]);
 all_rois = {'return';'delay';'stem';'choice';'reward'};
 genotypes = ["Control", "CA1-APP"];
 colors = [0.14,0.85,0.71; 0.85,0.14,0.28];
-sp = "W:\Lorena\Analysis_scripts\Bernardo_code\plots";
+sp = "W:\Bernardo\plots";
 
 % Parameters 
 win = 640; % window to smooth the ratio around win / fs = +- 20 ms
@@ -86,7 +86,7 @@ for animal = animal_numbers
                 'fig_name', int2str(animal), ...
                 'win', win, ...
                 'v_edges', v_edges, ...
-                'save_path', "W:\Lorena\Analysis_scripts\Bernardo_code\plots", ...
+                'save_path', sp, ...
                 'ext', ".png");
  
     %try
