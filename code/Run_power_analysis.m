@@ -27,13 +27,16 @@ band = [5, 12]; % theta
 smooth_win = 2; % seconds
 delay_t = {'d0'}; %sessInfo(i).sessDirs
 
+x_bound = 10;
+n_indx = 100;
+
 % Outputs
 problematicSessions = {};
 results = struct([]);
 
 wb = waitbar(0,'Running animal loop 0%');
 a = 1;
-animal_numbers = [58];%[9,12,14,19,23,24,27,28,30,38,39,113,114,115,116];
+animal_numbers = [58,61,65,66,69,70,72,88,89,125,126,139,145,146,151,178,180,181,182,183,191,196,197];%[9,12,14,19,23,24,27,28,30,38,39,113,114,115,116];
 for animal = animal_numbers
     sessions = {All_sessInfo.animal};
     s_indices = find(cellfun(@(sessions) ~isempty(sessions) && ...
@@ -41,6 +44,7 @@ for animal = animal_numbers
     
     lfps = {};
     praws = {};
+    trans = {};
     pideals = {};
     
     s = 0;
@@ -75,6 +79,17 @@ for animal = animal_numbers
                 praws{s} = praws;
                 pideals{s} = pideal;
 
+                % Psychometrics
+                tran = get_transitions(praw.x, praw.y, x_bound, n_indx);
+                trans{s} = tran;
+
+                plot(praw.x, praw.y, color="blue")
+                hold on
+                scatter(praw.x(tran(1,:)), praw.y(tran(1,:)), "filled",ColorVariable=tran(2,:))
+                name = num2str(animal) + "m_" + num2str(iii) + "tr.png";
+                saveas(gcf, fullfile(sp, "maze", name));
+                hold off
+
             end
         catch
             problematicSessions = [problematicSessions; sessInfo(i).mainDir];
@@ -82,7 +97,8 @@ for animal = animal_numbers
         end
         clc
     end
-    
+
+    if false
     %% Run power analysis
     fprintf('\nRunning power analysis\n');
     opt = struct(...
@@ -107,11 +123,13 @@ for animal = animal_numbers
     %catch
     %    problematicSessions = [problematicSessions; animal];
     %end
+    end
 
     %% Save
     results(a).animal = animal;
     results(a).genotype = sessInfo.genotype;
-    
+    results(a).trans = trans;
+
     r = a/length(animal_numbers);
     waitbar(r,wb,"Running " + num2str(r*100,2) + "%");
     a = a + 1;
@@ -119,8 +137,9 @@ for animal = animal_numbers
 end
 clc
 delete(wb);
-error "end"
 
+plot_performance(results, colors, sp)
+error end
 
 %%
 plot_mean_grid(results,"power_grid", "theta power", opt_td)
@@ -150,6 +169,51 @@ end
 %% Groups
 
 plot_ratio_velocity(results, colors, genotypes, opt_td)
+
+%% Helper Functions
+
+function tran = get_transitions(x, y, x_bound, win)
+    % x, y : position
+    % t    : time vector (same length)
+    % tw   : time window (seconds)
+    tran_ind = [];
+    tran_typ = [];
+    hits = 1;
+    for t = 1:length(x)-win
+        if y(t) < 0 && abs(x(t)) < x_bound && all(abs(x(t+1:t+win)) > x_bound)
+
+            tran_ind = [tran_ind, t];
+            tran_typ = [tran_typ, sign(x(t))];
+            
+            if length(tran_ind) > 1
+                hit =  abs(sign(tran_typ(end)) - sign(tran_typ(end-1))) / 2;
+                hits = [hits, hit];
+            end
+
+        end
+    end
+    tran = [tran_ind; tran_typ; hits];
+end
+
+function plot_performance(results, colors, sp)
+    n_animals = numel(results);
+
+    for a = 1:n_animals
+        trans = results(a).trans;
+        n_ses = numel(trans);
+        performance = zeros(n_ses,1);
+        for s = 1:n_ses
+            hits = trans{s}(3,:);
+            performance(s) = sum(hits) / length(hits) * 100;
+        end
+        c = colors(results(a).genotype, :);
+        scatter(1:n_ses, performance,"filled", "MarkerFaceColor", c)
+        hold on
+    end
+    name = "performance.png";
+    saveas(gcf, fullfile(sp, name));
+    hold off
+end
 
 function plot_mean_grid(results, gname, name, opt)
     
