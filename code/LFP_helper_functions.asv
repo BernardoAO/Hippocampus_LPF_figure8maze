@@ -1,4 +1,4 @@
-%% Td analysis functions
+%%% LFP analysis functions
 % Bernardo AO
 
 function [vel_grid, power_grid, ratio_vel] = ...
@@ -53,7 +53,12 @@ function [vel_grid, power_grid, ratio_vel] = ...
     %power_lin = fig8_linear(power_grid, "theta power");
 end
 
+%% Helper Functions
+
 function conv_result = conv_LFP(lfp, fs, freq_band, n_cycles)
+    % Obtains the power of a band via the convolution with a morlet
+    % wavelett.
+    %
     % Inputs:
     % lfp: 1d array with the LFP signal
     % fs: sampling time_vec
@@ -81,6 +86,8 @@ function conv_result = conv_LFP(lfp, fs, freq_band, n_cycles)
 end
 
 function power = power_LFP_multitaper(lfp, fs, freq_band, TW, K)
+    % Obtains the power of an LFP signal via the multitaper method.
+    %
     % Inputs:
     % lfp: 1d array with the LFP signal
     % fs: sampling time_vec
@@ -119,6 +126,8 @@ function power = power_LFP_multitaper(lfp, fs, freq_band, TW, K)
 end
 
 function [power_sm, phase] = LFP_Hilbert(lfp, d, opt)
+    % Obtains the power and phase of an LFP signal via a Hilbert transfrom.
+    %
     % Inputs:
     % lfp: 1d array with the LFP signal
     % b, a: butter filter 
@@ -139,6 +148,9 @@ function [power_sm, phase] = LFP_Hilbert(lfp, d, opt)
 end
 
 function power_pt = get_power(pideal, lfp, opt)
+    % Given a pideal object, obtains the power of an LFP signal for each
+    % element in pideal.
+    %
     % Inputs:
     % pideal: pideal object 
     % lfp: LFP object
@@ -176,6 +188,68 @@ function power_pt = get_power(pideal, lfp, opt)
     end
 end
 
+function tran = get_transitions(x, y, y_bound, win)
+    % Obtains the start of each lap in the fig8maze given a y boundary. 
+    %
+    % Inputs:
+    % x, y : position
+    % y_bound    : y coordinate to mark a lap
+    % win   : consecutive time windows to mark a transition (indx)
+    % Outputs:
+    % tran : matrix shape (3,n_tran) (time index, left/right, hit/miss)
+    tran_ind = [];
+    tran_typ = [];
+    hits = 1;
+    
+    xlim = 10;
+    xflag = 1;
+    for t = 1:length(x)-win
+    
+        if xflag && abs(x(t)) > xlim && y(t) < y_bound && all(y(t+1:t+win) > y_bound)
+            xflag = 0;
+
+            tran_ind = [tran_ind, t];
+            tran_typ = [tran_typ, sign(x(t))];
+            
+            if length(tran_ind) > 1
+                hit =  abs(tran_typ(end) - tran_typ(end-1)) / 2;
+                hits = [hits, hit];
+            end
+        end
+        
+        if abs(x(t)) < xlim
+            xflag = 1;
+        end
+
+    end
+    tran = [tran_ind; tran_typ; hits];
+end
+
+function p_ideal = get_p_ideal(pos, std_grid, d_lim)
+    % Calculates the idealized path given a standarized grid.
+    %
+    % Inputs:
+    % pos : [x; y], shape (2,t)
+    % std_grid : [x; y], shape (2,t)
+    % d_lim : max travel distance in a video frame
+    % Outputs:
+    % p_ideal : shape (2,t)
+    
+    n_points = size(pos,2);
+    p_ideal = zeros(2,n_points);
+
+    idx = knnsearch(std_grid.', pos(:,1).');
+    p_ideal(:,1) = std_grid(:, idx);
+
+    for t = 2:n_points
+        d = sqrt(sum((std_grid - p_ideal(:,t-1)).^2, 1));
+        close_p = std_grid(:,d < d_lim);
+
+        idx = knnsearch(close_p.', pos(:,t).');
+        p_ideal(:,t) = close_p(:, idx);
+    end
+end
+
 function cmap = get_cmap()
     % Color map for ratio
     cn = 256;
@@ -183,6 +257,8 @@ function cmap = get_cmap()
     bot = linspace(0,1,cn/2)';
     cmap = [ones(cn/2,1), bot, bot; top, top, ones(cn/2,1)];
 end
+
+%% Plot functions
 
 function z_grid = fig8_heatmap(x_vec, y_vec, z_vec, tran, name, cmap,opt)
     % Gets and plots a heatmap given x,y, and z values. 
@@ -269,6 +345,7 @@ function z_grid = fig8_heatmap(x_vec, y_vec, z_vec, tran, name, cmap,opt)
 end
 
 function linear_grid = fig8_linear(grid, name)
+    % Linearizes the figure 8 maze  
     armx_left = 1;
     armx_center = 23;
     armx_right = 45;
@@ -322,4 +399,183 @@ function r_v = corr_speed_td(v,r,opt)
         r_v(i) = mean(r(bin_indx == i),'omitnan');
     end
 
+end
+
+function std_grid = make_std_grid(range, n_bin)
+    % Makes a standard grid for the figure 8 maze
+    %
+    % Inputs:
+    % range : [x_min,x_max; y_min,y_max]
+    % n_bin : [n_x, n_y]
+    % Outputs:
+    % std_grid : shape (2,n_points)
+
+    x_hor = linspace(range(1,1), range(1,2), n_bin(1));
+    y_hor = zeros(1, n_bin(1));
+
+    x_ver = zeros(1, n_bin(2));
+    y_ver = linspace(range(2,1), range(2,2), n_bin(2));
+
+    up_arm = [x_hor; y_hor + range(2,2)];
+    down_arm = [x_hor; y_hor + range(2,1)];
+
+    left_arm = [x_ver + range(1,1); y_ver];
+    center_arm = [x_ver; y_ver];
+    right_arm = [x_ver + range(1,2); y_ver];
+    
+    std_grid = [up_arm, left_arm(:,2:end-1), left_arm(:,2:end-1), ...
+        center_arm(:,2:end-1), right_arm(:,2:end-1), down_arm];
+end
+
+function plot_day(std_grid, pos, tran, animal, iii, sp, block_c)
+    % plots the x and y position with the standard grid background, and a
+    % raster indicating hit or miss with green/red.
+
+    scatter(std_grid(1,:), std_grid(2,:), 's', 'MarkerFaceColor', 'white')
+    hold on
+    plot(pos(1,:), pos(2,:), color="blue")
+    
+    idxhit = tran(1, tran(3,:) == 1);
+    idxmiss = tran(1, tran(3,:) == 0);
+    
+    scatter(pos(1,idxhit), pos(2,idxhit), 50, 'g', 'filled');
+    scatter(pos(1,idxmiss), pos(2,idxmiss),   50, 'r', 'filled');
+
+    name = num2str(animal) + "m_" + num2str(iii) + "tr.png";
+    saveas(gcf, fullfile(sp, "maze_" + block_c, name));
+    hold off
+end
+
+function plot_performance(results, colors, sp, plot_scatter)
+    % plots the percentage of hits for a set of mice for each session.
+
+    n_animals = numel(results);
+    max_sessions = 60;
+    performance_all = nan([n_animals,max_sessions]);
+    for a = 1:n_animals
+        trans = results(a).trans;
+        n_ses = numel(trans);
+        performance = zeros(n_ses,1);
+        for s = 1:n_ses
+            hits = trans{s}(3,:);
+            performance(s) = sum(hits) / length(hits) * 100;
+        end
+        performance_all(a,1:n_ses) = performance;
+        
+        ynoise = 0.1*randn(n_ses);
+        if plot_scatter
+            c = colors(results(a).genotype, :);
+            scatter(1:n_ses, performance + ynoise, ...
+                "filled", "MarkerFaceColor", c,"MarkerFaceAlpha",0.1)
+            hold on
+        end
+    end
+    
+    for g = 1:2
+        performance_group = performance_all([results.genotype] == g, :);
+        mean_group = mean(performance_group, 1,"omitnan");
+
+        if plot_scatter
+            plot(1:max_sessions, mean_group, ...
+                "Color",colors(g,:), "Marker","square")
+
+        else
+            ste_group = std(performance_group,[],1,"omitnan") / ...
+                sqrt(size(performance_group, 1));
+            
+            hold on
+            errorbar(1:max_sessions, mean_group, ste_group, ...
+                     "Color",colors(g,:), "Marker","square")
+        end
+    end
+    ylim([50 100])
+    xlim([0 30])
+    name = "performance.png";
+    saveas(gcf, fullfile(sp, name));
+    hold off
+end
+
+function plot_mean_grid(results, gname, name, opt)
+    % Plots the mean grid (spatial visualization of a metric) for a set of 
+    % mice.
+
+    x_edges = -23:23;
+    y_edges = -35:35;
+    x_centers = (x_edges(1:end-1) + x_edges(2:end)) / 2;
+    y_centers = (y_edges(1:end-1) + y_edges(2:end)) / 2;
+    
+    g_shape = size(results(1).(gname));
+    n_animals = numel(results);
+    all_grid = zeros(g_shape(1), g_shape(2), n_animals);
+
+    for a = 1:n_animals
+        if contains(name,"theta power") || contains(name,"delta power")
+            grid = results(a).(gname);
+            grid(grid==0) = nan;
+            m = mean(grid,"all","omitmissing");
+            s = std(grid, [],"all","omitmissing");
+            all_grid(:,:,a) = (grid - m) / s;
+        else
+            all_grid(:,:,a) = results(a).(gname);
+        end
+    end
+    mean_grid = mean(all_grid,3);
+
+    % Plot
+    figure;
+    imagesc(x_centers, y_centers, mean_grid);
+    axis xy; 
+    t_name = " Average " + name + " heatmap";
+    title(t_name);
+    axis off
+    if gname == "vel_grid" || contains(name,"theta power") || contains(name,"delta power")
+        colormap(flipud(hot))
+        if gname == "vel_grid"
+            clim([0,14]);
+        else
+            clim([-1,3]);
+        end
+    else
+        cmap = get_cmap();
+        colormap(flipud(cmap))
+        clim([-2,2]);
+    end
+    a = colorbar;
+    a.Label.String = name;
+    saveas(gcf, fullfile(opt.save_path, t_name + "all.pdf"));
+end
+
+function plot_ratio_velocity(results, colors, genotypes, opt)
+    % Plots the
+
+    v_edges = opt.v_edges;
+    v_bins = (v_edges(1:end-1) + v_edges(2:end)) / 2;
+    
+    figure;
+    for g = 1:2
+        r = results([results.genotype] == g);
+        m = mean([r.ratio_vel], 2);
+        err = std([r.ratio_vel], [], 2) / sqrt(size([r.ratio_vel],2));
+        hold on
+        e = errorbar(v_bins, m, err);
+        e.Color = colors(g,:);
+        e.Marker = "o";
+    end
+    hold off
+    legend(genotypes)
+    xlabel("velocity")
+    ylabel("log td ratio")
+    t_name = " Average td ratio";
+    title(t_name);
+    box off
+
+    saveas(gcf, fullfile(opt.save_path, t_name + "all.pdf"));
+end
+
+function cmap = get_cmap()
+    % Color map for ratio
+    cn = 256;
+    top = linspace(1,0,cn/2)';
+    bot = linspace(0,1,cn/2)';
+    cmap = [ones(cn/2,1), bot, bot; top, top, ones(cn/2,1)];
 end

@@ -25,10 +25,16 @@ win = 640; % window to smooth the ratio around win / fs = +- 20 ms
 v_edges = [0, logspace(-0.6,1.2,12)]; % velocity edges for binning
 band = [5, 12]; % theta
 smooth_win = 2; % seconds
-delay_t = {'d0'}; %sessInfo(i).sessDirs
+delay_t = {'d10'}; %sessInfo(i).sessDirs
 
-x_bound = 10;
-n_indx = 100;
+% grid
+y_bound = -20;
+n_indx = 50;
+
+range = [-25, 25; -35, 35];
+n_bin = [20, 28];
+d_lim = 10;
+std_grid = make_std_grid(range,n_bin);
 
 % Outputs
 problematicSessions = {};
@@ -36,7 +42,8 @@ results = struct([]);
 
 wb = waitbar(0,'Running animal loop 0%');
 a = 1;
-animal_numbers = [58,61,65,66,69,70,72,88,89,125,126,139,145,146,151,178,180,181,182,183,191,196,197];%[9,12,14,19,23,24,27,28,30,38,39,113,114,115,116];
+animal_numbers = [58,61,65,66,69,70,72,88,89,125,126,139,145,146,151,178]%, ...
+    %180,181,182,183,191,192,196,197,213,214,221,226,227,228,229];%[9,12,14,19,23,24,27,28,30,38,39,113,114,115,116];
 for animal = animal_numbers
     sessions = {All_sessInfo.animal};
     s_indices = find(cellfun(@(sessions) ~isempty(sessions) && ...
@@ -80,15 +87,13 @@ for animal = animal_numbers
                 pideals{s} = pideal;
 
                 % Psychometrics
-                tran = get_transitions(praw.x, praw.y, x_bound, n_indx);
+                tran = get_transitions(praw.x, praw.y, y_bound, n_indx);
                 trans{s} = tran;
 
-                plot(praw.x, praw.y, color="blue")
-                hold on
-                scatter(praw.x(tran(1,:)), praw.y(tran(1,:)), "filled",ColorVariable=tran(2,:))
-                name = num2str(animal) + "m_" + num2str(iii) + "tr.png";
-                saveas(gcf, fullfile(sp, "maze", name));
-                hold off
+                pos = [praw.x, praw.y].';
+                p_ideal = get_p_ideal(pos, std_grid, d_lim);
+                
+                plot_day(std_grid, pos, tran, animal, iii, sp, block_c)
 
             end
         catch
@@ -138,8 +143,8 @@ end
 clc
 delete(wb);
 
-plot_performance(results, colors, sp)
-error end
+plot_performance(results, colors, sp, false)
+
 
 %%
 plot_mean_grid(results,"power_grid", "theta power", opt_td)
@@ -168,36 +173,102 @@ end
 
 %% Groups
 
-plot_ratio_velocity(results, colors, genotypes, opt_td)
+%plot_ratio_velocity(results, colors, genotypes, opt_td)
+plot_performance(results, colors, sp, false)
 
 %% Helper Functions
 
-function tran = get_transitions(x, y, x_bound, win)
+function tran = get_transitions(x, y, y_bound, win)
     % x, y : position
-    % t    : time vector (same length)
-    % tw   : time window (seconds)
+    % y_bound    : y coordinate to mark a lap
+    % win   : consecutive time windows to mark a transition (indx)
     tran_ind = [];
     tran_typ = [];
     hits = 1;
+    
+    xlim = 10;
+    xflag = 1;
     for t = 1:length(x)-win
-        if y(t) < 0 && abs(x(t)) < x_bound && all(abs(x(t+1:t+win)) > x_bound)
+    
+        if xflag && abs(x(t)) > xlim && y(t) < y_bound && all(y(t+1:t+win) > y_bound)
+            xflag = 0;
 
             tran_ind = [tran_ind, t];
             tran_typ = [tran_typ, sign(x(t))];
             
             if length(tran_ind) > 1
-                hit =  abs(sign(tran_typ(end)) - sign(tran_typ(end-1))) / 2;
+                hit =  abs(tran_typ(end) - tran_typ(end-1)) / 2;
                 hits = [hits, hit];
             end
-
         end
+        
+        if abs(x(t)) < xlim
+            xflag = 1;
+        end
+
     end
     tran = [tran_ind; tran_typ; hits];
 end
 
-function plot_performance(results, colors, sp)
-    n_animals = numel(results);
+function p_ideal = get_p_ideal(pos, std_grid, d_lim)
+    % pos : [x; y]
+    % std_grid : [x; y]
+    n_points = size(pos,2);
+    p_ideal = zeros(2,n_points);
 
+    idx = knnsearch(std_grid.', pos(:,1).');
+    p_ideal(:,1) = std_grid(:, idx);
+
+    for t = 2:n_points
+        d = sqrt(sum((std_grid - p_ideal(:,t-1)).^2, 1));
+        close_p = std_grid(:,d < d_lim);
+
+        idx = knnsearch(close_p.', pos(:,t).');
+        p_ideal(:,t) = close_p(:, idx);
+    end
+end
+
+function std_grid = make_std_grid(range, n_bin)
+    % range : [x_min,x_max; y_min,y_max]
+    % n_bin : [n_x, n_y]
+
+    x_hor = linspace(range(1,1), range(1,2), n_bin(1));
+    y_hor = zeros(1, n_bin(1));
+
+    x_ver = zeros(1, n_bin(2));
+    y_ver = linspace(range(2,1), range(2,2), n_bin(2));
+
+    up_arm = [x_hor; y_hor + range(2,2)];
+    down_arm = [x_hor; y_hor + range(2,1)];
+
+    left_arm = [x_ver + range(1,1); y_ver];
+    center_arm = [x_ver; y_ver];
+    right_arm = [x_ver + range(1,2); y_ver];
+    
+    std_grid = [up_arm, left_arm(:,2:end-1), left_arm(:,2:end-1), ...
+        center_arm(:,2:end-1), right_arm(:,2:end-1), down_arm];
+end
+
+function plot_day(std_grid, pos, tran, animal, iii, sp, block_c)
+    scatter(std_grid(1,:), std_grid(2,:), 's', 'MarkerFaceColor', 'white')
+    hold on
+    plot(pos(1,:), pos(2,:), color="blue")
+    
+    idxhit = tran(1, tran(3,:) == 1);
+    idxmiss = tran(1, tran(3,:) == 0);
+    
+    scatter(pos(1,idxhit), pos(2,idxhit), 50, 'g', 'filled');
+    scatter(pos(1,idxmiss), pos(2,idxmiss),   50, 'r', 'filled');
+
+    name = num2str(animal) + "m_" + num2str(iii) + "tr.png";
+    saveas(gcf, fullfile(sp, "maze_" + block_c, name));
+    hold off
+end
+
+function plot_performance(results, colors, sp, plot_scatter)
+    n_animals = numel(results);
+    max_sessions = 60;
+    performance_all = nan([n_animals,max_sessions]);
     for a = 1:n_animals
         trans = results(a).trans;
         n_ses = numel(trans);
@@ -206,10 +277,36 @@ function plot_performance(results, colors, sp)
             hits = trans{s}(3,:);
             performance(s) = sum(hits) / length(hits) * 100;
         end
-        c = colors(results(a).genotype, :);
-        scatter(1:n_ses, performance,"filled", "MarkerFaceColor", c)
-        hold on
+        performance_all(a,1:n_ses) = performance;
+        
+        ynoise = 0.1*randn(n_ses);
+        if plot_scatter
+            c = colors(results(a).genotype, :);
+            scatter(1:n_ses, performance + ynoise, ...
+                "filled", "MarkerFaceColor", c,"MarkerFaceAlpha",0.1)
+            hold on
+        end
     end
+    
+    for g = 1:2
+        performance_group = performance_all([results.genotype] == g, :);
+        mean_group = mean(performance_group, 1,"omitnan");
+
+        if plot_scatter
+            plot(1:max_sessions, mean_group, ...
+                "Color",colors(g,:), "Marker","square")
+
+        else
+            ste_group = std(performance_group,[],1,"omitnan") / ...
+                sqrt(size(performance_group, 1));
+            
+            hold on
+            errorbar(1:max_sessions, mean_group, ste_group, ...
+                     "Color",colors(g,:), "Marker","square")
+        end
+    end
+    ylim([50 100])
+    xlim([0 30])
     name = "performance.png";
     saveas(gcf, fullfile(sp, name));
     hold off
